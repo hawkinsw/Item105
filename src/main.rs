@@ -110,8 +110,6 @@ static JSON_URL: &str = "https://data.sec.gov/submissions/CIK__CIK__.json";
 fn main() {
     let args = Args::parse();
 
-    let mut processed = 0;
-
     // TODO: Make this command-line customizable.
     let period = Duration::minutes(10);
     let mut latest: Option<DateTime<FixedOffset>> = args.start_date;
@@ -124,6 +122,7 @@ fn main() {
     println!(".");
 
     loop {
+        let mut processed = 0;
         let now = Local::now().fixed_offset();
 
         let mut new_latest: Option<DateTime<FixedOffset>> = None;
@@ -169,7 +168,7 @@ fn main() {
                     }
                     let cik = cik.unwrap();
 
-                    if latest.is_some() && updated < latest.unwrap() {
+                    if latest.is_some() && updated <= latest.unwrap() {
                         if args.debug > 0 {
                             println!(
                                 "Skipping update from {} from {} that we should have seen before.",
