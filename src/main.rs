@@ -7,6 +7,7 @@ use serde::de::Error;
 use serde_json::Value;
 use std::str::FromStr;
 use std::thread;
+use regex::Regex;
 
 fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::Error>> {
     let client = reqwest::blocking::Client::builder()
@@ -94,6 +95,19 @@ struct Args {
     /// Enable debug output; specify repeatedly for increasingly detailed output.
     #[arg(short, long, action = clap::ArgAction::Count)]
     debug: u8,
+
+    /// Fire an alert when the filer's Item matches this regular expression.
+    #[arg(short, long, value_parser = parse_alert_regular_expression)]
+    alert: Regex,
+
+}
+
+fn parse_alert_regular_expression(
+    s: &str,
+) -> Result<Regex, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    s.parse().or(Err(String::into(format!(
+        "Could not parse alert to a valid regular expression."
+    ))))
 }
 
 fn parse_cli_start_date(
@@ -216,10 +230,10 @@ fn main() {
                                 if args.debug > 0 {
                                     println!("Valid filing posted by {} (cik: {})", title, cik);
                                 }
-                                if recent_form_item.contains("1.05") {
+                                if args.alert.is_match(&recent_form_item) {
                                     println!(
-                                        "{} (cik: {}) filed an 8-K update with a 1.05 item.",
-                                        title, cik
+                                        "{} (cik: {}) filed an 8-K update with an Item that matched the search criteria ({}).",
+                                        title, cik, args.alert.to_string()
                                     )
                                 }
                             }
