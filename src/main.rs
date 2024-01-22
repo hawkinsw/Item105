@@ -1,16 +1,98 @@
 use chrono::{prelude::*, Duration};
 use clap::Parser;
 use core::time;
+use regex::Regex;
 use rss::extension::ExtensionMap;
 use rss::Channel;
 use serde::de::Error;
+use serde::Deserialize;
 use serde_json::Value;
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::str::FromStr;
 use std::thread;
-use regex::Regex;
+use twitter_v2::data::Tweet;
+use twitter_v2::{authorization::Oauth1aToken, ApiResult};
 
-fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let client = reqwest::blocking::Client::builder()
+#[derive(Deserialize, Debug, Clone)]
+struct TwitterConfig {
+    pub consumer_key: String,
+    pub consumer_secret: String,
+    pub access_token: String,
+    pub access_secret: String,
+}
+
+impl TwitterConfig {
+    pub fn config_from_file(file: &mut File) -> Result<Self, TwitterConfigErrors> {
+        let mut reader = BufReader::new(file);
+        let mut file_contents: String = Default::default();
+        let _ = reader.read_to_string(&mut file_contents);
+
+        TryInto::try_into(file_contents)
+    }
+}
+
+#[derive(Debug)]
+pub enum TwitterConfigErrors {
+    ParseError,
+}
+
+impl TryFrom<String> for TwitterConfig {
+    type Error = TwitterConfigErrors;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        serde_json::from_str(raw.as_str()).map_err(|_| TwitterConfigErrors::ParseError)
+    }
+}
+
+#[test]
+fn test_TwitterConfig_config_from_file() {
+    let mut file = std::fs::File::open("test_config.json").unwrap();
+    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
+        assert!(config.access_secret == "access_secret");
+        assert!(config.access_token == "access_token");
+        assert!(config.consumer_key == "consumer_key");
+        assert!(config.consumer_secret == "consumer_secret");
+        return;
+    }
+    assert!(true == false);
+}
+
+async fn tweet(message: &str, configuration: &TwitterConfig) -> ApiResult<Oauth1aToken, Tweet, ()> {
+    let token = Oauth1aToken::new(
+        configuration.consumer_key.clone(),
+        configuration.consumer_secret.clone(),
+        configuration.access_token.clone(),
+        configuration.access_secret.clone(),
+    );
+    let api = twitter_v2::TwitterApi::new(token);
+    let mut tweet_builder = api.post_tweet();
+
+    tweet_builder.text(message.to_string());
+    tweet_builder.send().await
+}
+
+#[tokio::test]
+async fn test_tweet() {
+    let mut file = std::fs::File::open("config.json").unwrap();
+    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
+        let system_time = SystemTime::now();
+        let datetime: DateTime<Utc> = system_time.into();
+        let tweet_content = format!("This bot is alive ... {}", datetime.format("%d/%m/%Y %T"));
+        assert!(
+            tweet(
+                tweet_content.as_str(),
+                &config
+            )
+            .await.is_ok()
+        );
+        return;
+    }
+    assert!(false == true)
+}
+
+async fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::builder()
         .http1_title_case_headers()
         .use_rustls_tls() // Make sure that we get TLS.
         .build()?;
@@ -21,8 +103,8 @@ fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::Error>>
                 reqwest::header::USER_AGENT,
                 "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
             )
-            .send()?
-            .bytes()?
+            .send().await?
+            .bytes().await?
             .to_vec(),
     )
     .map_err(Into::into);
@@ -99,7 +181,6 @@ struct Args {
     /// Fire an alert when the filer's Item matches this regular expression.
     #[arg(short, long, value_parser = parse_alert_regular_expression)]
     alert: Regex,
-
 }
 
 fn parse_alert_regular_expression(
@@ -121,12 +202,30 @@ fn parse_cli_start_date(
 static RSS_URL: &str = "https://www.sec.gov/Archives/edgar/usgaap.rss.xml";
 static JSON_URL: &str = "https://data.sec.gov/submissions/CIK__CIK__.json";
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     // TODO: Make this command-line customizable.
     let period = Duration::minutes(10);
     let mut latest: Option<DateTime<FixedOffset>> = args.start_date;
+
+    let mut twitter_config_file = std::fs::File::open("config.json");
+    if !twitter_config_file.is_ok() {
+        println!("There was an error opening the twitter configuration file: {:?}", twitter_config_file);
+        return;
+    }
+
+    let mut twitter_config_file = twitter_config_file.unwrap();
+
+    let twitter_config = TwitterConfig::config_from_file(&mut twitter_config_file);
+
+    if !twitter_config.is_ok() {
+        println!("There was an error parsing the twitter configuration file: {:?}", twitter_config);
+        return;
+    }
+
+    let twitter_config = twitter_config.unwrap();
 
     print!("Checking for new Item 1.05 entries",);
 
@@ -143,7 +242,7 @@ fn main() {
 
         println!("It is {:?} ... checking for new entries!", now);
 
-        match synchronous_download(RSS_URL).and_then(|atom_string| parse_rss(atom_string)) {
+        match synchronous_download(RSS_URL).await.and_then(|atom_string| parse_rss(atom_string)) {
             Err(err) => {
                 println!("{}", err)
             }
@@ -203,7 +302,7 @@ fn main() {
                     let json_url = JSON_URL.to_string().replace("__CIK__", &formatted_cik);
 
                     let r: Result<(String, String), Box<dyn std::error::Error>> = synchronous_download(&json_url)
-                    .or_else(|err| {
+                    .await.or_else(|err| {
                         Err(String::into(format!(
                             "There was an error downloading the JSON data for company with CIK of {}: {}",
                             cik, err
@@ -234,7 +333,14 @@ fn main() {
                                     println!(
                                         "{} (cik: {}) filed an 8-K update with an Item that matched the search criteria ({}).",
                                         title, cik, args.alert.to_string()
-                                    )
+                                    );
+                                    let message = format!("{} (cik: {}) filed an 8-K update with an Item 1.05", title, cik);
+                                    let tweet_result = tweet(&message, &twitter_config).await;
+                                    if tweet_result.is_ok() {
+                                        println!("I tweeted: {}", message);
+                                    } else {
+                                        println!("There was an error when I tried to tweet: {:?}", tweet_result);
+                                    }
                                 }
                             }
                         }
