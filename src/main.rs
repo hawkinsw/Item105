@@ -11,7 +11,8 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::str::FromStr;
 use std::thread;
-use twitter_v2::data::Tweet;
+use std::time::SystemTime;
+use twitter_v2::data::{Descriptioned, Tweet};
 use twitter_v2::{authorization::Oauth1aToken, ApiResult};
 
 #[derive(Deserialize, Debug, Clone)]
@@ -72,20 +73,42 @@ async fn tweet(message: &str, configuration: &TwitterConfig) -> ApiResult<Oauth1
     tweet_builder.send().await
 }
 
+async fn update_bio(
+    message: &str,
+    configuration: &TwitterConfig,
+) -> ApiResult<Oauth1aToken, Descriptioned, ()> {
+    let token = Oauth1aToken::new(
+        configuration.consumer_key.clone(),
+        configuration.consumer_secret.clone(),
+        configuration.access_token.clone(),
+        configuration.access_secret.clone(),
+    );
+    let api = twitter_v2::TwitterApi::new_1(token);
+    api.post_update_bio(message)
+        .await
+}
+
+#[tokio::test]
+async fn test_update_bio() {
+    let mut file = std::fs::File::open("config.json").unwrap();
+    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
+        assert!(update_bio("", &config).await.is_ok());
+        return;
+    }
+    assert!(false == true)
+}
+
 #[tokio::test]
 async fn test_tweet() {
     let mut file = std::fs::File::open("config.json").unwrap();
     if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
         let system_time = SystemTime::now();
         let datetime: DateTime<Utc> = system_time.into();
-        let tweet_content = format!("This bot is alive ... {}", datetime.format("%d/%m/%Y %T"));
-        assert!(
-            tweet(
-                tweet_content.as_str(),
-                &config
-            )
-            .await.is_ok()
+        let tweet_content = format!(
+            "Test, test, test: This bot is alive ... {}",
+            datetime.format("%d/%m/%Y %T")
         );
+        assert!(tweet(tweet_content.as_str(), &config).await.is_ok());
         return;
     }
     assert!(false == true)
@@ -103,8 +126,10 @@ async fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::E
                 reqwest::header::USER_AGENT,
                 "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
             )
-            .send().await?
-            .bytes().await?
+            .send()
+            .await?
+            .bytes()
+            .await?
             .to_vec(),
     )
     .map_err(Into::into);
@@ -212,7 +237,10 @@ async fn main() {
 
     let mut twitter_config_file = std::fs::File::open("config.json");
     if !twitter_config_file.is_ok() {
-        println!("There was an error opening the twitter configuration file: {:?}", twitter_config_file);
+        println!(
+            "There was an error opening the twitter configuration file: {:?}",
+            twitter_config_file
+        );
         return;
     }
 
@@ -221,7 +249,10 @@ async fn main() {
     let twitter_config = TwitterConfig::config_from_file(&mut twitter_config_file);
 
     if !twitter_config.is_ok() {
-        println!("There was an error parsing the twitter configuration file: {:?}", twitter_config);
+        println!(
+            "There was an error parsing the twitter configuration file: {:?}",
+            twitter_config
+        );
         return;
     }
 
@@ -242,7 +273,21 @@ async fn main() {
 
         println!("It is {:?} ... checking for new entries!", now);
 
-        match synchronous_download(RSS_URL).await.and_then(|atom_string| parse_rss(atom_string)) {
+        let bio_content = format!("I tweet when companies file 8-Ks with an Item 1.05. My icon is by Vectorstall from the noun project. Last update: {:?}", now);
+        let update_bio_result = update_bio(&bio_content, &twitter_config).await;
+        if update_bio_result.is_ok() {
+            println!("I updated my bio.");
+        } else {
+            println!(
+                "There was an error when I tried to update my bio: {:?}",
+                update_bio_result
+            );
+        }
+
+        match synchronous_download(RSS_URL)
+            .await
+            .and_then(|atom_string| parse_rss(atom_string))
+        {
             Err(err) => {
                 println!("{}", err)
             }
@@ -334,12 +379,18 @@ async fn main() {
                                         "{} (cik: {}) filed an 8-K update with an Item that matched the search criteria ({}).",
                                         title, cik, args.alert.to_string()
                                     );
-                                    let message = format!("{} (cik: {}) filed an 8-K update with an Item 1.05", title, cik);
+                                    let message = format!(
+                                        "{} (cik: {}) filed an 8-K update with an Item 1.05",
+                                        title, cik
+                                    );
                                     let tweet_result = tweet(&message, &twitter_config).await;
                                     if tweet_result.is_ok() {
                                         println!("I tweeted: {}", message);
                                     } else {
-                                        println!("There was an error when I tried to tweet: {:?}", tweet_result);
+                                        println!(
+                                            "There was an error when I tried to tweet: {:?}",
+                                            tweet_result
+                                        );
                                     }
                                 }
                             }

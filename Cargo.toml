@@ -3,6 +3,9 @@ name = "item105"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["twitter_bindings"]
+
 [dependencies]
 chrono = "0.4.31"
 clap = { version = "4.4.12", features = ["derive"] }
@@ -12,6 +15,6 @@ rss = "2.0.6"
 serde = { version = "1.0.194", features = ["derive"] }
 serde_json = "1.0.108"
 tokio = { version = "1.35.1", features = ["full"]}
-twitter-v2 = "0.1.8"
+twitter-v2 = { path = "twitter_bindings" }
 url = "2.5.0"
 
