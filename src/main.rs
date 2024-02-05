@@ -197,6 +197,16 @@ async fn test_update_bio() {
     assert!(false == true)
 }
 
+async fn tweet_hello(configuration: &TwitterConfig) -> ApiResult<Oauth1aToken, Tweet, ()> {
+    let system_time = SystemTime::now();
+    let datetime: DateTime<Utc> = system_time.into();
+    let hello_content = format!(
+        "Test, test, test: This bot says, 'Hello,' at ... {}",
+        datetime.format("%d/%m/%Y %T")
+    );
+    tweet(hello_content.as_str(), configuration, None::<u64>).await
+}
+
 #[tokio::test]
 async fn test_tweet() {
     let mut file = std::fs::File::open("502_config.json").unwrap();
@@ -369,6 +379,22 @@ async fn main() {
         print!(" since {}.", latest);
     }
     println!(".");
+
+    if args.hello {
+        let tweet_hello_result = tweet_hello(&config.twitter).await;
+        if tweet_hello_result.is_ok() {
+            println!("I successfully tweeted a hello message as requested.");
+        } else {
+            let tweet_hello_error = tweet_hello_result.err();
+            println!(
+                "I failed to tweet a hello message as requested: {:?}",
+                tweet_hello_error
+            );
+        }
+    }
+
+    // Safe here because we confirmed during config-file parse above.
+    let alert: Regex = config.alert.parse().unwrap();
 
     loop {
         let mut processed = 0;
