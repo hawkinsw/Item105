@@ -77,8 +77,15 @@ struct TwitterConfig {
     pub access_secret: String,
 }
 
-impl TwitterConfig {
-    pub fn config_from_file(file: &mut File) -> Result<Self, TwitterConfigErrors> {
+#[derive(Deserialize, Debug, Clone)]
+struct Item105Config {
+    pub bio: Option<String>,
+    pub alert: String,
+    pub twitter: TwitterConfig,
+}
+
+impl Item105Config {
+    pub fn config_from_file(file: &mut File) -> Result<Self, Item105Errors> {
         let mut reader = BufReader::new(file);
         let mut file_contents: String = Default::default();
         let _ = reader.read_to_string(&mut file_contents);
@@ -87,47 +94,74 @@ impl TwitterConfig {
     }
 }
 
-#[derive(Debug)]
-pub enum TwitterConfigErrors {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Item105Errors {
     ParseError,
+    InvalidAuthorizationHeader,
 }
 
-impl TryFrom<String> for TwitterConfig {
-    type Error = TwitterConfigErrors;
+impl Display for Item105Errors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ParseError => {
+                write!(f, "There was a parse error.")
+            }
+            Self::InvalidAuthorizationHeader => {
+                write!(f, "Invalid authorization header.")
+            }
+        }
+    }
+}
+
+impl StdError for Item105Errors {}
+
+impl TryFrom<String> for Item105Config {
+    type Error = Item105Errors;
 
     fn try_from(raw: String) -> Result<Self, Self::Error> {
-        serde_json::from_str(raw.as_str()).map_err(|_| TwitterConfigErrors::ParseError)
+        serde_json::from_str(raw.as_str())
+            .or(Err(Item105Errors::ParseError))
+            .and_then(|config: Self| {
+                parse_alert_regular_expression(config.alert.clone())
+                    .or(Err(Item105Errors::ParseError))
+                    .and(Ok(config))
+            })
     }
 }
 
 #[test]
-fn test_TwitterConfig_config_from_file() {
-    let mut file = std::fs::File::open("test_config.json").unwrap();
-    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
-        assert!(config.access_secret == "access_secret");
-        assert!(config.access_token == "access_token");
-        assert!(config.consumer_key == "consumer_key");
-        assert!(config.consumer_secret == "consumer_secret");
+fn test_Item105Config_config_from_file() {
+    let mut file = std::fs::File::open("configs/test.json").unwrap();
+    if let Ok(config) = Item105Config::config_from_file(&mut file) {
+        assert!(config.twitter.access_secret == "access_secret");
+        assert!(config.twitter.access_token == "access_token");
+        assert!(config.twitter.consumer_key == "consumer_key");
+        assert!(config.twitter.consumer_secret == "consumer_secret");
+        assert!(config.alert == "anything");
+        assert!(config.bio.unwrap() == "my bio");
         return;
     }
     assert!(true == false);
 }
 
-async fn tweet(message: &str, configuration: &TwitterConfig) -> ApiResult<Oauth1aToken, Tweet, ()> {
-    let token = Oauth1aToken::new(
-        configuration.consumer_key.clone(),
-        configuration.consumer_secret.clone(),
-        configuration.access_token.clone(),
-        configuration.access_secret.clone(),
+#[test]
+fn test_Item105Config_config_from_file_bad_alert() {
+    let mut file = std::fs::File::open("configs/test_bad_alert.json").unwrap();
+    assert!(
+        Item105Config::config_from_file(&mut file).is_err_and(|e| e == Item105Errors::ParseError)
     );
-    let api = twitter_v2::TwitterApi::new(token);
-    let mut tweet_builder = api.post_tweet();
-
-    tweet_builder.text(message.to_string());
-    tweet_builder.send().await
 }
 
-async fn update_bio(
+#[test]
+fn test_Item105Config_config_from_file_no_bio() {
+    let mut file = std::fs::File::open("configs/test_no_bio.json").unwrap();
+    if let Ok(config) = Item105Config::config_from_file(&mut file) {
+        assert!(config.bio.is_none());
+        return;
+    }
+    assert!(false)
+}
+async fn tweet(
     message: &str,
     configuration: &TwitterConfig,
     reply_id: Option<impl IntoNumericId>,
@@ -165,15 +199,16 @@ async fn test_update_bio() {
 
 #[tokio::test]
 async fn test_tweet() {
-    let mut file = std::fs::File::open("config.json").unwrap();
-    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
-        let system_time = SystemTime::now();
-        let datetime: DateTime<Utc> = system_time.into();
-        let tweet_content = format!(
-            "Test, test, test: This bot is alive ... {}",
-            datetime.format("%d/%m/%Y %T")
-        );
-        assert!(tweet(tweet_content.as_str(), &config).await.is_ok());
+    let mut file = std::fs::File::open("502_config.json").unwrap();
+    if let Ok(config) = Item105Config::config_from_file(&mut file) {
+        let result = tweet_hello(&config.twitter).await;
+        if let Ok(result) = result {
+            assert!(true)
+        } else {
+            let error = result.err();
+            println!("error: {:?}", error);
+            assert!(false);
+        }
         return;
     }
     assert!(false == true)
@@ -264,17 +299,20 @@ struct Args {
     #[arg(short, long, value_parser = parse_cli_start_date)]
     start_date: Option<DateTime<FixedOffset>>,
 
+    #[clap(short, long, value_parser = clap::value_parser!(ClioPath).exists())]
+    config: ClioPath,
+
     /// Enable debug output; specify repeatedly for increasingly detailed output.
     #[arg(short, long, action = clap::ArgAction::Count)]
     debug: u8,
 
-    /// Fire an alert when the filer's Item matches this regular expression.
-    #[arg(short, long, value_parser = parse_alert_regular_expression)]
-    alert: Regex,
+    /// Send a hello tweet when the bot starts.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    hello: bool,
 }
 
 fn parse_alert_regular_expression(
-    s: &str,
+    s: String,
 ) -> Result<Regex, Box<dyn std::error::Error + Send + Sync + 'static>> {
     s.parse().or(Err(String::into(format!(
         "Could not parse alert to a valid regular expression."
@@ -300,8 +338,10 @@ async fn main() {
     let period = Duration::minutes(10);
     let mut latest: Option<DateTime<FixedOffset>> = args.start_date;
 
-    let mut twitter_config_file = std::fs::File::open("config.json");
-    if !twitter_config_file.is_ok() {
+    //let mut twitter_config_file = std::fs::File::open("config.json");
+    let mut twitter_config_clio = args.config.open().unwrap();
+    let twitter_config_file = twitter_config_clio.get_file();
+    if !twitter_config_file.is_some() {
         println!(
             "There was an error opening the twitter configuration file: {:?}",
             twitter_config_file
@@ -311,19 +351,19 @@ async fn main() {
 
     let mut twitter_config_file = twitter_config_file.unwrap();
 
-    let twitter_config = TwitterConfig::config_from_file(&mut twitter_config_file);
+    let config = Item105Config::config_from_file(&mut twitter_config_file);
 
-    if !twitter_config.is_ok() {
+    if !config.is_ok() {
         println!(
-            "There was an error parsing the twitter configuration file: {:?}",
-            twitter_config
+            "There was an error parsing the program configuration file: {:?}",
+            config
         );
         return;
     }
 
-    let twitter_config = twitter_config.unwrap();
+    let config = config.unwrap();
 
-    print!("Checking for new Item 1.05 entries",);
+    print!("Checking for new 8-k entries",);
 
     if let Some(latest) = latest {
         print!(" since {}.", latest);
