@@ -449,6 +449,7 @@ async fn main() {
                     }
 
                     let title = entry.title().unwrap_or("No Title");
+                    let filing_link = entry.link();
                     let cik = cik_from_extensions(entry.extensions());
                     if cik.is_none() {
                         println!(
@@ -507,18 +508,40 @@ async fn main() {
                                 if args.debug > 0 {
                                     println!("Valid filing posted by {} (cik: {})", title, cik);
                                 }
-                                if args.alert.is_match(&recent_form_item) {
+                                if alert.is_match(&recent_form_item) {
                                     println!(
                                         "{} (cik: {}) filed an 8-K update with an Item that matched the search criteria ({}).",
-                                        title, cik, args.alert.to_string()
+                                        title, cik, alert.to_string()
                                     );
                                     let message = format!(
-                                        "{} (cik: {}) filed an 8-K update with an Item 1.05",
-                                        title, cik
+                                        "{} (cik: {}) filed an 8-K update with an Item {}",
+                                        title,
+                                        cik,
+                                        alert.to_string()
                                     );
-                                    let tweet_result = tweet(&message, &twitter_config).await;
-                                    if tweet_result.is_ok() {
+                                    let tweet_result =
+                                        tweet(&message, &config.twitter, None::<u64>).await;
+
+                                    if let Ok(tweet_result) = tweet_result {
                                         println!("I tweeted: {}", message);
+                                        if let Some(posted_tweet) =
+                                            tweet_result.into_payload().data()
+                                        {
+                                            let result_id = posted_tweet.id;
+                                            if let Some(filing_link) = filing_link {
+                                                let followup_message =
+                                                    format!("Filing URL: {}", filing_link);
+                                                if let Ok(_) = tweet(
+                                                    &followup_message,
+                                                    &config.twitter,
+                                                    Some(result_id),
+                                                )
+                                                .await
+                                                {
+                                                    println!("I posted a reply to the original tweet with the link to the filing.")
+                                                }
+                                            }
+                                        }
                                     } else {
                                         println!(
                                             "There was an error when I tried to tweet: {:?}",
