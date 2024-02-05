@@ -1,19 +1,73 @@
 use chrono::{prelude::*, Duration};
 use clap::Parser;
+use clio::ClioPath;
 use core::time;
 use regex::Regex;
+use reqwest::Method;
 use rss::extension::ExtensionMap;
 use rss::Channel;
 use serde::de::Error;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
+use std::error::Error as StdError;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::str::FromStr;
 use std::thread;
 use std::time::SystemTime;
-use twitter_v2::data::{Descriptioned, Tweet};
+use twitter_v2::data::Tweet;
+use twitter_v2::id::IntoNumericId;
 use twitter_v2::{authorization::Oauth1aToken, ApiResult};
+use url::Url;
+
+fn bearer_from_config(
+    request: &reqwest::Request,
+    config: &TwitterConfig,
+) -> Result<reqwest::header::HeaderValue, Box<dyn std::error::Error>> {
+    let token = oauth1::Token::from_parts(
+        config.consumer_key.clone(),
+        config.consumer_secret.clone(),
+        config.access_token.clone(),
+        config.access_secret.clone(),
+    );
+    let method = request.method().as_str();
+    let url = {
+        let mut url = request.url().clone();
+        url.set_query(None);
+        url.set_fragment(None);
+        url
+    };
+    let request = request.url().query_pairs().collect::<BTreeSet<_>>();
+    oauth1::authorize(method, url, &request, &token, oauth1::HmacSha1)
+        .parse()
+        .map_err(|_| Item105Errors::InvalidAuthorizationHeader.into())
+}
+
+async fn update_bio(
+    message: &str,
+    configuration: &TwitterConfig,
+) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::builder()
+        .http1_title_case_headers()
+        .use_rustls_tls() // Make sure that we get TLS.
+        .build()?;
+
+    let mut request = client
+        .request(
+            Method::POST,
+            Url::parse("https://api.twitter.com/1.1/account/update_profile.json")?,
+        )
+        .query(&[("description", message)])
+        .build()?;
+    let authorization_header = bearer_from_config(&request, configuration)?;
+    request
+        .headers_mut()
+        .insert(reqwest::header::AUTHORIZATION, authorization_header);
+
+    client.execute(request).await.or_else(|e| Err(e.into()))
+}
 
 #[derive(Deserialize, Debug, Clone)]
 struct TwitterConfig {
@@ -76,23 +130,34 @@ async fn tweet(message: &str, configuration: &TwitterConfig) -> ApiResult<Oauth1
 async fn update_bio(
     message: &str,
     configuration: &TwitterConfig,
-) -> ApiResult<Oauth1aToken, Descriptioned, ()> {
+    reply_id: Option<impl IntoNumericId>,
+) -> ApiResult<Oauth1aToken, Tweet, ()> {
     let token = Oauth1aToken::new(
         configuration.consumer_key.clone(),
         configuration.consumer_secret.clone(),
         configuration.access_token.clone(),
         configuration.access_secret.clone(),
     );
-    let api = twitter_v2::TwitterApi::new_1(token);
-    api.post_update_bio(message)
-        .await
+    let api = twitter_v2::TwitterApi::new(token);
+    let mut tweet_builder = api.post_tweet();
+
+    if let Some(reply_id) = reply_id {
+        tweet_builder.in_reply_to_tweet_id(reply_id);
+    }
+    tweet_builder.text(message.to_string());
+    tweet_builder.send().await
 }
 
 #[tokio::test]
 async fn test_update_bio() {
-    let mut file = std::fs::File::open("config.json").unwrap();
-    if let Ok(config) = TwitterConfig::config_from_file(&mut file) {
-        assert!(update_bio("", &config).await.is_ok());
+    let mut file = std::fs::File::open("502_config.json").unwrap();
+    if let Ok(config) = Item105Config::config_from_file(&mut file) {
+        let result = update_bio(
+            "This is a test of the update_bio_local method.",
+            &config.twitter,
+        )
+        .await;
+        assert!(result.is_ok());
         return;
     }
     assert!(false == true)
@@ -273,15 +338,17 @@ async fn main() {
 
         println!("It is {:?} ... checking for new entries!", now);
 
-        let bio_content = format!("I tweet when companies file 8-Ks with an Item 1.05. My icon is by Vectorstall from the noun project. Last update: {:?}", now);
-        let update_bio_result = update_bio(&bio_content, &twitter_config).await;
-        if update_bio_result.is_ok() {
-            println!("I updated my bio.");
-        } else {
-            println!(
-                "There was an error when I tried to update my bio: {:?}",
-                update_bio_result
-            );
+        if let Some(bio_content) = config.bio.clone() {
+            let bio_content = format!("{} Last update: {:?}", bio_content, now);
+            let update_bio_result = update_bio(&bio_content, &config.twitter).await;
+            if update_bio_result.is_ok() {
+                println!("I updated my bio.");
+            } else {
+                println!(
+                    "There was an error when I tried to update my bio: {:?}",
+                    update_bio_result
+                );
+            }
         }
 
         match synchronous_download(RSS_URL)
