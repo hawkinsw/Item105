@@ -21,6 +21,7 @@ use twitter_v2::data::Tweet;
 use twitter_v2::id::IntoNumericId;
 use twitter_v2::{authorization::Oauth1aToken, ApiResult};
 use url::Url;
+use std::net::IpAddr;
 
 fn bearer_from_config(
     request: &reqwest::Request,
@@ -78,10 +79,17 @@ struct TwitterConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct PrometheusConfig {
+    ip: IpAddr,
+    port: u16,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 struct Item105Config {
     pub bio: Option<String>,
     pub alert: String,
     pub twitter: TwitterConfig,
+    pub prometheus: Option<PrometheusConfig>,
 }
 
 impl Item105Config {
@@ -161,6 +169,26 @@ fn test_Item105Config_config_from_file_no_bio() {
     }
     assert!(false)
 }
+
+#[test]
+fn test_Item105Config_config_good_prometheus() {
+    let mut file = std::fs::File::open("configs/test_good_prometheus.json").unwrap();
+    if let Ok(config) = Item105Config::config_from_file(&mut file) {
+        if let Some(prometheus) = config.prometheus {
+            assert!(prometheus.ip.is_ipv4());
+            return;
+        }
+    }
+    assert!(false)
+}
+
+#[test]
+fn test_Item105Config_config_bad_prometheus_ip() {
+    let mut file = std::fs::File::open("configs/test_bad_prometheus.json").unwrap();
+    let parse_result = Item105Config::config_from_file(&mut file);
+    assert!(parse_result.is_err());
+}
+
 async fn tweet(
     message: &str,
     configuration: &TwitterConfig,
