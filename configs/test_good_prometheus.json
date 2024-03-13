@@ -1,0 +1,13 @@
+{
+  "alert": "",
+  "twitter": {
+    "consumer_key": "consumer_key",
+    "consumer_secret": "consumer_secret",
+    "access_token": "access_token",
+    "access_secret": "access_secret"
+  },
+  "prometheus": {
+    "ip": "127.0.0.1",
+    "port": 9100
+  }
+}
