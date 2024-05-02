@@ -262,7 +262,7 @@ async fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::E
             .request(reqwest::Method::GET, url)
             .header(
                 reqwest::header::USER_AGENT,
-                "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                "SEC Insights - Item502 and Item105 Twitter Bots hawkinwh@ucmail.uc.edu"
             )
             .send()
             .await?
