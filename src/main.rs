@@ -277,7 +277,20 @@ fn json_parse(value: String) -> Result<Value, Box<dyn std::error::Error>> {
     return Ok(serde_json::from_str::<Value>(value.as_str())?);
 }
 
-fn parse_recent_form(json: Value) -> Result<(String, String), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Filing {
+    pub items: String,
+    pub form: String,
+    pub time: DateTime<FixedOffset>,
+}
+
+impl Filing {
+    fn new(items: String, form: String, time: DateTime<FixedOffset>) -> Self {
+        Filing { items, form, time }
+    }
+}
+
+fn extract_filings_metadata(json: Value) -> Result<Vec<Filing>, Box<dyn std::error::Error>> {
     let filings = json
         .as_object()
         .and_then(|obj| obj.get("filings"))
@@ -286,30 +299,92 @@ fn parse_recent_form(json: Value) -> Result<(String, String), Box<dyn std::error
         .as_object()
         .and_then(|obj| obj.get("recent"))
         .ok_or(serde_json::Error::custom("Could not find recent"))?;
-    let form = recent
+    let forms = recent
         .as_object()
         .and_then(|obj| obj.get("form"))
-        .ok_or(serde_json::Error::custom("Could not find form."))?;
-    let tyype = form
-        .as_array()
-        .and_then(|arr| arr.get(0))
-        .ok_or(serde_json::Error::custom("Could not find the type."))?;
-    let type_string = String::from(tyype.as_str().ok_or(serde_json::Error::custom(
-        "Could not convert the form's type to a string.",
-    ))?);
+        .and_then(|obj| obj.as_array())
+        .ok_or(serde_json::Error::custom("Could not find forms."))?;
     let items = recent
         .as_object()
         .and_then(|obj| obj.get("items"))
-        .ok_or(serde_json::Error::custom("Could not find the items."))?;
-    let item = items
-        .as_array()
-        .and_then(|arr| arr.get(0))
-        .ok_or(serde_json::Error::custom("Could not find the item."))?;
-    let item_string = String::from(item.as_str().ok_or(serde_json::Error::custom(
-        "Could not convert the filing's item to a string.",
-    ))?);
+        .and_then(|obj| obj.as_array())
+        .ok_or(serde_json::Error::custom("Could not find items."))?;
+    let times: Vec<DateTime<FixedOffset>> = recent
+        .as_object()
+        .and_then(|obj| obj.get("acceptanceDateTime"))
+        .and_then(|obj| obj.as_array())
+        .and_then(|obj| {
+            Some(
+                obj.iter()
+                    .map_while(|raw| {
+                        raw.as_str()
+                            .and_then(|raw_str| DateTime::parse_from_rfc3339(raw_str).ok())
+                    })
+                    .collect(),
+            )
+        })
+        .and_then(|obj: Vec<DateTime<FixedOffset>>| {
+            Some(
+                obj.into_iter()
+                    .map(|time| time + Duration::hours(4))
+                    .collect(),
+            )
+        })
+        .ok_or(serde_json::Error::custom("Could not find acceptance date/times."))?;
+    if forms.len() != items.len() || items.len() != times.len() {
+        return Err(Box::new(serde_json::Error::custom(
+            "Corrupt filings JSON: Length of arrays do not match",
+        )));
+    }
 
-    return Ok((type_string, item_string));
+    let mut result: Vec<Filing> = Vec::new();
+
+    for index in 0..forms.len() {
+        result.push(Filing::new(
+            items[index].to_string(),
+            forms[index].to_string(),
+            times[index],
+        ));
+    }
+    Ok(result)
+}
+
+#[test]
+fn test_parse_recent_form_slim() {
+    let file = std::fs::File::open("test_data/slim.json").unwrap();
+    let raw_value: Result<Value, serde_json::Error> = serde_json::from_reader(file);
+    assert!(raw_value.is_ok());
+    let extract_result = extract_filings_metadata(raw_value.unwrap());
+    assert!(extract_result.is_ok());
+    assert!(extract_result.unwrap().len() == 3);
+}
+
+#[test]
+fn test_parse_recent_form_uneven() {
+    let file = std::fs::File::open("test_data/uneven.json").unwrap();
+    let raw_value: Result<Value, serde_json::Error> = serde_json::from_reader(file);
+    assert!(raw_value.is_ok());
+    let extract_result = extract_filings_metadata(raw_value.unwrap());
+    assert!(
+        extract_result.is_err_and(|err| err.to_string().contains("Length of arrays do not match"))
+    );
+}
+
+#[test]
+fn test_parse_recent_form_filter_by_date() {
+    let now: DateTime<Utc> = Local::now().into();
+    let file = std::fs::File::open("test_data/slim.json").unwrap();
+    let raw_value: Result<Value, serde_json::Error> = serde_json::from_reader(file);
+    assert!(raw_value.is_ok());
+
+    let extract_result = extract_filings_metadata(raw_value.unwrap());
+    let filtered_result = extract_result
+        .unwrap()
+        .into_iter()
+        .filter(|filing| filing.time > now);
+    assert!(filtered_result.collect::<Vec<Filing>>().len() == 1);
+
+    assert!(true);
 }
 
 fn parse_rss(atom_string: String) -> Result<Channel, Box<dyn std::error::Error>> {
@@ -495,7 +570,7 @@ async fn main() {
                     }
                     let cik = cik.unwrap();
 
-                    if latest.is_some() && updated <= latest.unwrap() {
+                    if latest.is_none() || updated <= latest.unwrap() {
                         if args.debug > 0 {
                             println!(
                                 "Skipping update from {} from {} that we should have seen before.",
@@ -515,7 +590,7 @@ async fn main() {
                     let formatted_cik = format!("{:0>10}", cik);
                     let json_url = JSON_URL.to_string().replace("__CIK__", &formatted_cik);
 
-                    let r: Result<(String, String), Box<dyn std::error::Error>> = synchronous_download(&json_url)
+                    let r: Result<Vec<Filing>, Box<dyn std::error::Error>> = synchronous_download(&json_url)
                     .await.or_else(|err| {
                         Err(String::into(format!(
                             "There was an error downloading the JSON data for company with CIK of {}: {}",
@@ -529,7 +604,7 @@ async fn main() {
                             cik, err
                         )))
                     })
-                    .and_then(|recent_form| parse_recent_form(recent_form)
+                    .and_then(|recent_form| extract_filings_metadata(recent_form)
                     .or_else(|err| {
                         Err(String::into(format!(
                             "There was an error finding the specifics of the filing from company with CIK of {}: {}",
@@ -538,50 +613,74 @@ async fn main() {
                     })));
 
                     match r {
-                        Ok((recent_form_type, recent_form_item)) => {
-                            if recent_form_type == "8-K" {
-                                if args.debug > 0 {
-                                    println!("Valid filing posted by {} (cik: {})", title, cik);
-                                }
-                                if alert.is_match(&recent_form_item) {
-                                    println!(
+                        Ok(filings) => {
+                            let filings: Vec<Filing> = filings
+                                .into_iter()
+                                .filter(|filing| latest.is_some() && filing.time > latest.unwrap())
+                                .collect();
+                            if args.debug > 0 {
+                                println!(
+                                    "Found {} new, valid filing(s) posted by {} (cik: {})",
+                                    filings.len(),
+                                    title,
+                                    cik
+                                );
+                            }
+                            for filing in filings {
+                                if filing.form == "\"8-K\"".to_string() {
+                                    if args.debug > 0 {
+                                        println!(
+                                            "{} posted a(n) {} with items {}",
+                                            title,
+                                            filing.form.clone(),
+                                            filing.items.clone()
+                                        );
+                                    }
+                                    if alert.is_match(&filing.items) {
+                                        println!(
                                         "{} (cik: {}) filed an 8-K update with an Item that matched the search criteria ({}).",
-                                        title, cik, alert.to_string()
-                                    );
-                                    let message = format!(
-                                        "{} (cik: {}) filed an 8-K update with an Item {}",
-                                        title,
-                                        cik,
-                                        alert.to_string()
-                                    );
-                                    let tweet_result =
-                                        tweet(&message, &config.twitter, None::<u64>).await;
+                                        title, cik, alert.to_string());
 
-                                    if let Ok(tweet_result) = tweet_result {
-                                        println!("I tweeted: {}", message);
-                                        if let Some(posted_tweet) =
-                                            tweet_result.into_payload().data()
-                                        {
-                                            let result_id = posted_tweet.id;
-                                            if let Some(filing_link) = filing_link {
-                                                let followup_message =
-                                                    format!("Filing URL: {}", filing_link);
-                                                if let Ok(_) = tweet(
-                                                    &followup_message,
-                                                    &config.twitter,
-                                                    Some(result_id),
-                                                )
-                                                .await
-                                                {
-                                                    println!("I posted a reply to the original tweet with the link to the filing.")
+                                        // If we are on a dry run, then skip the remaining steps!
+                                        if args.dry {
+                                            continue;
+                                        }
+
+                                        let message = format!(
+                                            "{} (cik: {}) filed an 8-K update with an Item {}",
+                                            title,
+                                            cik,
+                                            alert.to_string()
+                                        );
+                                        let tweet_result =
+                                            tweet(&message, &config.twitter, None::<u64>).await;
+
+                                        if let Ok(tweet_result) = tweet_result {
+                                            println!("I tweeted: {}", message);
+                                            if let Some(posted_tweet) =
+                                                tweet_result.into_payload().data()
+                                            {
+                                                let result_id = posted_tweet.id;
+                                                if let Some(filing_link) = filing_link {
+                                                    let followup_message =
+                                                        format!("Filing URL: {}", filing_link);
+                                                    if let Ok(_) = tweet(
+                                                        &followup_message,
+                                                        &config.twitter,
+                                                        Some(result_id),
+                                                    )
+                                                    .await
+                                                    {
+                                                        println!("I posted a reply to the original tweet with the link to the filing.")
+                                                    }
                                                 }
                                             }
+                                        } else {
+                                            println!(
+                                                "There was an error when I tried to tweet: {:?}",
+                                                tweet_result
+                                            );
                                         }
-                                    } else {
-                                        println!(
-                                            "There was an error when I tried to tweet: {:?}",
-                                            tweet_result
-                                        );
                                     }
                                 }
                             }

@@ -1,0 +1,137 @@
+{
+  "cik": "103379",
+  "entityType": "operating",
+  "sic": "2320",
+  "sicDescription": "Men's & Boys' Furnishgs, Work Clothg, & Allied Garments",
+  "insiderTransactionForOwnerExists": 1,
+  "insiderTransactionForIssuerExists": 1,
+  "name": "V F CORP",
+  "tickers": [
+    "VFC"
+  ],
+  "exchanges": [
+    "NYSE"
+  ],
+  "ein": "231180120",
+  "description": "",
+  "website": "",
+  "investorWebsite": "",
+  "category": "Large accelerated filer",
+  "fiscalYearEnd": "0330",
+  "stateOfIncorporation": "PA",
+  "stateOfIncorporationDescription": "PA",
+  "addresses": {
+    "mailing": {
+      "street1": "1551 WEWATTA STREET",
+      "street2": null,
+      "city": "DENVER",
+      "stateOrCountry": "CO",
+      "zipCode": "80202",
+      "stateOrCountryDescription": "CO"
+    },
+    "business": {
+      "street1": "1551 WEWATTA STREET",
+      "street2": null,
+      "city": "DENVER",
+      "stateOrCountry": "CO",
+      "zipCode": "80202",
+      "stateOrCountryDescription": "CO"
+    }
+  },
+  "phone": "(720) 778-4000",
+  "flags": "",
+  "formerNames": [
+    {
+      "name": "V F CORP/NC",
+      "from": "2002-03-20T00:00:00.000Z",
+      "to": "2002-02-15T00:00:00.000Z"
+    },
+    {
+      "name": "V F CORP /PA/",
+      "from": "1994-04-29T00:00:00.000Z",
+      "to": "2001-01-10T00:00:00.000Z"
+    }
+  ],
+  "filings": {
+    "recent": {
+      "accessionNumber": [
+        "0001193125-24-118163",
+        "0001127602-24-011622",
+        "0001127602-24-011605"
+      ],
+      "filingDate": [
+        "2024-04-26",
+        "2024-04-01",
+        "2024-04-01"
+      ],
+      "reportDate": [
+        "2024-04-25",
+        "2024-03-29",
+        "2024-03-29"
+      ],
+      "acceptanceDateTime": [
+        "2024-05-02T23:30:58.000Z",
+        "2024-04-02T22:47:52.000Z",
+        "2024-04-02T21:47:52.000Z"
+      ],
+      "act": [
+        "34",
+        "",
+        ""
+      ],
+      "form": [
+        "8-K",
+        "4",
+        "4"
+      ],
+      "fileNumber": [
+        "001-05256",
+        "",
+        ""
+      ],
+      "filmNumber": [
+        "24884382",
+        "",
+        ""
+      ],
+      "items": [
+        "1.01,2.03,7.01,9.01",
+        "",
+        ""
+      ],
+      "size": [
+        1201475,
+        6010,
+        6001
+      ],
+      "isXBRL": [
+        1,
+        0,
+        0
+      ],
+      "isInlineXBRL": [
+        1,
+        0,
+        0
+      ],
+      "primaryDocument": [
+        "d755724d8k.htm",
+        "xslF345X05/form4.xml",
+        "xslF345X05/form4.xml"
+      ],
+      "primaryDocDescription": [
+        "8-K",
+        "PRIMARY DOCUMENT",
+        "PRIMARY DOCUMENT"
+      ]
+    },
+    "files": [
+      {
+        "name": "CIK0000103379-submissions-001.json",
+        "filingCount": 1454,
+        "filingFrom": "1994-02-02",
+        "filingTo": "2014-09-29"
+      }
+    ]
+  }
+}
