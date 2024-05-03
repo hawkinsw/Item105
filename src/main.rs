@@ -14,6 +14,7 @@ use std::error::Error as StdError;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::thread;
 use std::time::SystemTime;
@@ -21,7 +22,6 @@ use twitter_v2::data::Tweet;
 use twitter_v2::id::IntoNumericId;
 use twitter_v2::{authorization::Oauth1aToken, ApiResult};
 use url::Url;
-use std::net::IpAddr;
 
 fn bearer_from_config(
     request: &reqwest::Request,
@@ -262,7 +262,7 @@ async fn synchronous_download(url: &str) -> Result<String, Box<dyn std::error::E
             .request(reqwest::Method::GET, url)
             .header(
                 reqwest::header::USER_AGENT,
-                "SEC Insights - Item502 and Item105 Twitter Bots hawkinwh@ucmail.uc.edu"
+                "SEC Insights - Item502 and Item105 Twitter Bots hawkinwh@ucmail.uc.edu",
             )
             .send()
             .await?
@@ -330,7 +330,9 @@ fn extract_filings_metadata(json: Value) -> Result<Vec<Filing>, Box<dyn std::err
                     .collect(),
             )
         })
-        .ok_or(serde_json::Error::custom("Could not find acceptance date/times."))?;
+        .ok_or(serde_json::Error::custom(
+            "Could not find acceptance date/times.",
+        ))?;
     if forms.len() != items.len() || items.len() != times.len() {
         return Err(Box::new(serde_json::Error::custom(
             "Corrupt filings JSON: Length of arrays do not match",
