@@ -347,6 +347,10 @@ struct Args {
     /// Send a hello tweet when the bot starts.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     hello: bool,
+
+    /// Execute in dry-run mode.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    dry: bool,
 }
 
 fn parse_alert_regular_expression(
@@ -433,15 +437,18 @@ async fn main() {
         println!("It is {:?} ... checking for new entries!", now);
 
         if let Some(bio_content) = config.bio.clone() {
-            let bio_content = format!("{} Last update: {:?}", bio_content, now);
-            let update_bio_result = update_bio(&bio_content, &config.twitter).await;
-            if update_bio_result.is_ok() {
-                println!("I updated my bio.");
-            } else {
-                println!(
-                    "There was an error when I tried to update my bio: {:?}",
-                    update_bio_result
-                );
+            // Only update the bio if we are not on a dry run!
+            if !args.dry {
+                let bio_content = format!("{} Last update: {:?}", bio_content, now);
+                let update_bio_result = update_bio(&bio_content, &config.twitter).await;
+                if update_bio_result.is_ok() {
+                    println!("I updated my bio.");
+                } else {
+                    println!(
+                        "There was an error when I tried to update my bio: {:?}",
+                        update_bio_result
+                    );
+                }
             }
         }
 
