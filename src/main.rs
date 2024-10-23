@@ -629,7 +629,8 @@ async fn main() {
                                 );
                             }
                             for filing in filings {
-                                if filing.form == "\"8-K\"".to_string() {
+                                if filing.form == "\"8-K\"".to_string() ||
+                                   filing.form == "\"8-K/A\"".to_string() {
                                     if args.debug > 0 {
                                         println!(
                                             "{} posted a(n) {} with items {}",
