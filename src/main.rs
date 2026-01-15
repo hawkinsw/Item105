@@ -1,3 +1,4 @@
+use chrono::format::Fixed;
 use chrono::{prelude::*, Duration};
 use clap::Parser;
 use clio::ClioPath;
@@ -323,13 +324,6 @@ fn extract_filings_metadata(json: Value) -> Result<Vec<Filing>, Box<dyn std::err
                     .collect(),
             )
         })
-        .and_then(|obj: Vec<DateTime<FixedOffset>>| {
-            Some(
-                obj.into_iter()
-                    .map(|time| time + Duration::hours(4))
-                    .collect(),
-            )
-        })
         .ok_or(serde_json::Error::custom(
             "Could not find acceptance date/times.",
         ))?;
@@ -407,6 +401,24 @@ fn cik_from_extensions(extensions: &ExtensionMap) -> Option<String> {
     None
 }
 
+fn acceptance_datetime_from_extensions(extensions: &ExtensionMap) -> Option<DateTime<FixedOffset>> {
+    extensions
+        .get("edgar")
+        .and_then(|edgar| {
+            edgar.get("xbrlFiling")
+        })
+        .and_then(|acceptedDates| {
+            acceptedDates[0].children.get("acceptanceDatetime")
+        })
+        .and_then(|acceptedDate| {
+            acceptedDate[0].value()
+        })
+        .and_then(|acceptedDate| {
+            NaiveDateTime::parse_from_str(acceptedDate, "%Y%m%d%H%M%S").ok()
+        })
+        .map(|naiveAcceptedDatetime| naiveAcceptedDatetime.and_utc().fixed_offset())
+}
+
 #[derive(Parser, Debug)]
 #[command(author, about, long_about = None)]
 struct Args {
@@ -455,7 +467,8 @@ async fn main() {
     let args = Args::parse();
 
     // TODO: Make this command-line customizable.
-    let period = Duration::minutes(10);
+    //let period = Duration::minutes(10);
+    let period = Duration::minutes(1);
     let mut latest: Option<DateTime<FixedOffset>> = args.start_date;
 
     //let mut twitter_config_file = std::fs::File::open("config.json");
@@ -562,6 +575,15 @@ async fn main() {
                     }
 
                     let title = entry.title().unwrap_or("No Title");
+
+                    let acceptance_datetime = acceptance_datetime_from_extensions(&entry.extensions);
+                    if acceptance_datetime.is_none() {
+                        println!(
+                            "Could not gather the acceptance date/time from RSS entry with title {} ... skipping.", title);
+                        continue;
+                    }
+                    let acceptance_datetime = acceptance_datetime.unwrap();
+
                     let filing_link = entry.link();
                     let cik = cik_from_extensions(entry.extensions());
                     if cik.is_none() {
@@ -619,7 +641,16 @@ async fn main() {
                         Ok(filings) => {
                             let filings: Vec<Filing> = filings
                                 .into_iter()
-                                .filter(|filing| latest.is_some() && filing.time > latest.unwrap())
+                                .filter(|filing| {
+                                    if args.debug > 2 {
+                                        println!(
+                                            "Comparing filing date/time of {} with accepted date/time of {}",
+                                            filing.time,
+                                            acceptance_datetime
+                                        )
+                                    }
+                                    filing.time == acceptance_datetime
+                                })
                                 .collect();
                             if args.debug > 0 {
                                 println!(
@@ -630,8 +661,9 @@ async fn main() {
                                 );
                             }
                             for filing in filings {
-                                if filing.form == "\"8-K\"".to_string() ||
-                                   filing.form == "\"8-K/A\"".to_string() {
+                                if filing.form == "\"8-K\"".to_string()
+                                    || filing.form == "\"8-K/A\"".to_string()
+                                {
                                     if args.debug > 0 {
                                         println!(
                                             "{} posted a(n) {} with items {}",
