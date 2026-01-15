@@ -446,7 +446,8 @@ fn parse_cli_start_date(
     ))))
 }
 
-static RSS_URL: &str = "https://www.sec.gov/Archives/edgar/usgaap.rss.xml";
+//static RSS_URL: &str = "https://www.sec.gov/Archives/edgar/usgaap.rss.xml";
+static RSS_URL: &str = "https://www.sec.gov/Archives/edgar/xbrlrss.all.xml";
 static JSON_URL: &str = "https://data.sec.gov/submissions/CIK__CIK__.json";
 
 #[tokio::main]
